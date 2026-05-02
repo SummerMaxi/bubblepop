@@ -20,8 +20,10 @@ function relativeTime(iso?: string): string | null {
 }
 
 describe("relativeTime", () => {
-  it("returns 'now' for a timestamp 30s in the past", () => {
-    const iso = new Date(Date.now() - 30_000).toISOString();
+  it("returns 'now' for a timestamp a few seconds in the past", () => {
+    // 5s is comfortably inside the < 1 minute window even with test-runner
+    // startup latency. 30s sits on the rounding boundary and is flaky.
+    const iso = new Date(Date.now() - 5_000).toISOString();
     expect(relativeTime(iso)).toBe("now");
   });
 

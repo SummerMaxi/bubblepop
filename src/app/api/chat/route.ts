@@ -1,6 +1,11 @@
 import { GoogleGenAI } from "@google/genai";
 import type { TriagedItem } from "@/lib/types";
 import { rateLimit, clientKey } from "@/lib/rateLimit";
+import {
+  GEMINI_MODEL,
+  CHAT_RATE_LIMIT,
+  RATE_LIMIT_WINDOW_MS,
+} from "@/lib/constants";
 
 /**
  * POST /api/chat
@@ -17,9 +22,6 @@ import { rateLimit, clientKey } from "@/lib/rateLimit";
  * Read-only — no tool execution. Streams chunks as plain text so the UI can
  * render token-by-token.
  */
-
-// Flash-Lite: higher free-tier quota than Flash; chat does fine on it.
-const MODEL = "gemini-2.5-flash-lite";
 
 type ChatRole = "user" | "model";
 
@@ -94,11 +96,11 @@ export async function POST(request: Request) {
   }
 
   // Chat is more expensive than triage (multi-turn, no cache), so the limit
-  // is tighter: 15 requests per 60s per client.
+  // is tighter than triage. Tunable in lib/constants.ts.
   const { allowed, retryAfter } = rateLimit({
     key: clientKey(request),
-    limit: 15,
-    windowMs: 60_000,
+    limit: CHAT_RATE_LIMIT,
+    windowMs: RATE_LIMIT_WINDOW_MS,
   });
   if (!allowed) {
     return Response.json(
@@ -153,7 +155,7 @@ export async function POST(request: Request) {
   let iterator: AsyncGenerator<{ text?: string }>;
   try {
     iterator = (await ai.models.generateContentStream({
-      model: MODEL,
+      model: GEMINI_MODEL,
       contents,
       config: {
         systemInstruction: buildSystemInstruction(context),

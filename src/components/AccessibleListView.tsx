@@ -1,89 +1,18 @@
 "use client";
 
 import { useMemo } from "react";
-import { Mail, Calendar, CheckSquare, Clock, User } from "lucide-react";
-import type { TriagedItem, ContextSource } from "@/lib/types";
+import { Clock, User } from "lucide-react";
+import type { TriagedItem } from "@/lib/types";
 import { SectionLabel } from "@/components/ui/SectionLabel";
+import { ScoreBar } from "@/components/ui/ScoreBar";
 import { cn } from "@/lib/cn";
+import { SOURCE_LABEL, SOURCE_ICON, relativeTime } from "@/lib/format";
+import { HIGH_IMPORTANCE_THRESHOLD } from "@/lib/constants";
 
 interface Props {
   items: TriagedItem[];
   selectedId: string | null;
   onSelect: (id: string | null) => void;
-}
-
-const SOURCE_LABEL: Record<ContextSource, string> = {
-  email: "Email",
-  calendar: "Meeting",
-  task: "Task",
-};
-
-const SOURCE_ICON: Record<
-  ContextSource,
-  typeof Mail
-> = {
-  email: Mail,
-  calendar: Calendar,
-  task: CheckSquare,
-};
-
-function relativeTime(iso?: string): string | null {
-  if (!iso) return null;
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return null;
-  const diffMs = date.getTime() - Date.now();
-  const diffMin = Math.round(diffMs / 60000);
-  const abs = Math.abs(diffMin);
-  if (abs < 1) return "now";
-  if (abs < 60) return diffMin >= 0 ? `in ${abs}m` : `${abs}m ago`;
-  const diffHr = Math.round(diffMin / 60);
-  const absHr = Math.abs(diffHr);
-  if (absHr < 24) return diffHr >= 0 ? `in ${absHr}h` : `${absHr}h ago`;
-  const diffDay = Math.round(diffHr / 24);
-  const absDay = Math.abs(diffDay);
-  return diffDay >= 0 ? `in ${absDay}d` : `${absDay}d ago`;
-}
-
-function ScoreBar({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: number;
-  tone: "accent" | "muted";
-}) {
-  const pct = Math.round(value * 100);
-  return (
-    <div>
-      <div className="flex items-baseline justify-between mb-1.5">
-        <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-          {label}
-        </span>
-        <span className="font-mono text-xs tabular-nums text-foreground">
-          {pct}
-        </span>
-      </div>
-      <div
-        className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
-        role="presentation"
-      >
-        <div
-          className={cn(
-            "h-full rounded-full transition-all duration-700",
-            "motion-reduce:transition-none",
-            tone === "accent"
-              ? "bg-[linear-gradient(to_right,var(--accent),var(--accent-secondary))]"
-              : "bg-foreground/60",
-          )}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-      <span className="sr-only">
-        {label}: {pct} out of 100
-      </span>
-    </div>
-  );
 }
 
 function Pill({
@@ -229,7 +158,7 @@ export default function AccessibleListView({
                     <span className="hidden shrink-0 items-center gap-2 sm:inline-flex">
                       <Pill
                         value={item.importance}
-                        highlight={item.importance >= 0.7}
+                        highlight={item.importance >= HIGH_IMPORTANCE_THRESHOLD}
                         label="Imp"
                       />
                       <Pill

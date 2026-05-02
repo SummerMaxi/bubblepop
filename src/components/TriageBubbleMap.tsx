@@ -8,9 +8,16 @@ import {
   useState,
 } from "react";
 import * as d3 from "d3-force";
-import { Mail, Calendar, CheckSquare } from "lucide-react";
 import type { TriagedItem } from "@/lib/types";
 import { cn } from "@/lib/cn";
+import { SOURCE_ICON } from "@/lib/format";
+import {
+  MIN_BUBBLE_RADIUS,
+  MAX_BUBBLE_RADIUS,
+  BUBBLE_RADIUS_CURVE,
+  HIGH_IMPORTANCE_THRESHOLD,
+  MEDIUM_IMPORTANCE_THRESHOLD,
+} from "@/lib/constants";
 
 interface SimNode extends d3.SimulationNodeDatum {
   id: string;
@@ -29,13 +36,14 @@ interface Props {
   onSelect: (id: string | null) => void;
 }
 
-const MIN_RADIUS = 32;
-const MAX_RADIUS = 110;
-const RADIUS_CURVE = 1.6; // Higher = more dramatic size variance
-
-function importanceToRadius(importance: number) {
-  const t = Math.pow(Math.max(0, Math.min(1, importance)), 1 / RADIUS_CURVE);
-  return MIN_RADIUS + (MAX_RADIUS - MIN_RADIUS) * t;
+/**
+ * Map an importance score (0-1) to a pixel radius using a power curve.
+ * Higher curve values exaggerate the spread between low and high scores.
+ */
+export function importanceToRadius(importance: number) {
+  const clamped = Math.max(0, Math.min(1, importance));
+  const t = Math.pow(clamped, 1 / BUBBLE_RADIUS_CURVE);
+  return MIN_BUBBLE_RADIUS + (MAX_BUBBLE_RADIUS - MIN_BUBBLE_RADIUS) * t;
 }
 
 /** Items sharing a `from` field are linked — drives clustering visualization. */
@@ -56,11 +64,6 @@ function buildEdges(items: TriagedItem[]): Edge[] {
   return edges;
 }
 
-const SOURCE_ICONS = {
-  email: Mail,
-  calendar: Calendar,
-  task: CheckSquare,
-} as const;
 
 export default function TriageBubbleMap({
   items,
@@ -220,11 +223,13 @@ export default function TriageBubbleMap({
 
       {/* Bubbles */}
       {nodes.map((node) => {
-        const Icon = SOURCE_ICONS[node.item.source];
+        const Icon = SOURCE_ICON[node.item.source];
         const importance = node.item.importance;
         const isSelected = selectedId === node.id;
-        const isHigh = importance > 0.7;
-        const isMed = importance > 0.35 && importance <= 0.7;
+        const isHigh = importance > HIGH_IMPORTANCE_THRESHOLD;
+        const isMed =
+          importance > MEDIUM_IMPORTANCE_THRESHOLD &&
+          importance <= HIGH_IMPORTANCE_THRESHOLD;
 
         return (
           <button

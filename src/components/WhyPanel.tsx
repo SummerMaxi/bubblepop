@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { Mail, Calendar, CheckSquare, X, Clock, User } from "lucide-react";
+import { Mail, X, Clock, User } from "lucide-react";
 import type { TriagedItem } from "@/lib/types";
 import { cn } from "@/lib/cn";
+import { SOURCE_LABEL, SOURCE_ICON, relativeTime } from "@/lib/format";
+import { ScoreBar } from "@/components/ui/ScoreBar";
 
 const FOCUSABLE_SELECTOR =
   'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
@@ -11,70 +13,6 @@ const FOCUSABLE_SELECTOR =
 interface Props {
   item: TriagedItem | null;
   onClose: () => void;
-}
-
-const SOURCE_LABEL = {
-  email: "Email",
-  calendar: "Meeting",
-  task: "Task",
-} as const;
-
-const SOURCE_ICON = {
-  email: Mail,
-  calendar: Calendar,
-  task: CheckSquare,
-} as const;
-
-function relativeTime(iso?: string): string | null {
-  if (!iso) return null;
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return null;
-  const diffMs = date.getTime() - Date.now();
-  const diffMin = Math.round(diffMs / 60000);
-  const abs = Math.abs(diffMin);
-  if (abs < 1) return "now";
-  if (abs < 60) return diffMin >= 0 ? `in ${abs}m` : `${abs}m ago`;
-  const diffHr = Math.round(diffMin / 60);
-  const absHr = Math.abs(diffHr);
-  if (absHr < 24) return diffHr >= 0 ? `in ${absHr}h` : `${absHr}h ago`;
-  const diffDay = Math.round(diffHr / 24);
-  const absDay = Math.abs(diffDay);
-  return diffDay >= 0 ? `in ${absDay}d` : `${absDay}d ago`;
-}
-
-function ScoreBar({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: number;
-  tone: "accent" | "muted";
-}) {
-  const pct = Math.round(value * 100);
-  return (
-    <div>
-      <div className="flex items-baseline justify-between mb-1.5">
-        <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-          {label}
-        </span>
-        <span className="font-mono text-xs tabular-nums text-foreground">
-          {pct}
-        </span>
-      </div>
-      <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-        <div
-          className={cn(
-            "h-full rounded-full transition-all duration-700",
-            tone === "accent"
-              ? "bg-[linear-gradient(to_right,var(--accent),var(--accent-secondary))]"
-              : "bg-foreground/60",
-          )}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-    </div>
-  );
 }
 
 export function WhyPanel({ item, onClose }: Props) {

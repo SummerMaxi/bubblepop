@@ -1,6 +1,14 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import type { ContextItem, ScoredItem } from "@/lib/types";
 import { rateLimit, clientKey } from "@/lib/rateLimit";
+import {
+  GEMINI_MODEL,
+  TRIAGE_CACHE_TTL_MS,
+  TRIAGE_CACHE_MAX_ENTRIES,
+  TRIAGE_MAX_ITEMS,
+  TRIAGE_RATE_LIMIT,
+  RATE_LIMIT_WINDOW_MS,
+} from "@/lib/constants";
 
 /**
  * POST /api/triage
@@ -13,17 +21,11 @@ import { rateLimit, clientKey } from "@/lib/rateLimit";
  * urgency drive the bubble physics (size + buoyancy) on the client.
  */
 
-// Flash-Lite has a much higher free-tier daily quota than Flash (≥1500 RPD vs ~20)
-// — better fit for a hackathon demo that gets clicked through many times.
-const MODEL = "gemini-2.5-flash-lite";
-
-// In-memory response cache. Keyed by the JSON of `items`, 60-second TTL.
-// Per-instance (Cloud Run may scale to multiple instances) — that's fine; the
-// goal is to absorb repeat clicks within a single user's session, not perfect
-// global dedup.
+// In-memory response cache. Per-instance — Cloud Run may scale, that's fine;
+// the goal is to absorb repeat clicks within a single session, not perfect
+// global dedup. TTL + max entries are tunable in lib/constants.ts.
 type CacheEntry = { body: string; expiresAt: number };
 const triageCache = new Map<string, CacheEntry>();
-const CACHE_TTL_MS = 60_000;
 
 function hashKey(items: unknown[]): string {
   return JSON.stringify(items);
@@ -40,12 +42,11 @@ function getCached(key: string): string | null {
 }
 
 function setCached(key: string, body: string) {
-  // Cap cache size to avoid memory bloat (lazy eviction)
-  if (triageCache.size > 50) {
+  if (triageCache.size > TRIAGE_CACHE_MAX_ENTRIES) {
     const firstKey = triageCache.keys().next().value;
     if (firstKey) triageCache.delete(firstKey);
   }
-  triageCache.set(key, { body, expiresAt: Date.now() + CACHE_TTL_MS });
+  triageCache.set(key, { body, expiresAt: Date.now() + TRIAGE_CACHE_TTL_MS });
 }
 
 const SYSTEM_INSTRUCTION = `You are an executive assistant for an overwhelmed team lead.
@@ -131,9 +132,9 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
-  if (items.length > 50) {
+  if (items.length > TRIAGE_MAX_ITEMS) {
     return Response.json(
-      { error: "max 50 items per request" },
+      { error: `max ${TRIAGE_MAX_ITEMS} items per request` },
       { status: 400 },
     );
   }
@@ -155,8 +156,8 @@ export async function POST(request: Request) {
   // that would actually hit Gemini.
   const { allowed, retryAfter } = rateLimit({
     key: clientKey(request),
-    limit: 30, // 30 requests per minute per client
-    windowMs: 60_000,
+    limit: TRIAGE_RATE_LIMIT,
+    windowMs: RATE_LIMIT_WINDOW_MS,
   });
   if (!allowed) {
     return Response.json(
@@ -172,7 +173,7 @@ export async function POST(request: Request) {
 
   try {
     const response = await ai.models.generateContent({
-      model: MODEL,
+      model: GEMINI_MODEL,
       contents: buildUserPrompt(items as ContextItem[]),
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,

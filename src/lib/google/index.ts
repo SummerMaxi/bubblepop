@@ -1,20 +1,21 @@
 import type { ContextItem } from "@/lib/types";
+import {
+  GOOGLE_EMAIL_CAP,
+  GOOGLE_EVENT_CAP,
+  GOOGLE_TASK_CAP,
+} from "@/lib/constants";
 import { fetchRecentEmails } from "./gmail";
 import { fetchUpcomingEvents } from "./calendar";
 import { fetchOpenTasks } from "./tasks";
 
 /**
  * Pulls Gmail + Calendar + Tasks in parallel and returns a capped, merged
- * ContextItem list. Each source has an individual cap (12/8/10 → 30 max)
- * so a single chatty source can't crowd out the others.
+ * ContextItem list. Each source has an individual cap so a single chatty
+ * source can't crowd out the others. Caps are tunable in lib/constants.ts.
  *
  * If any single fetcher rejects we log + treat that source as empty so the
  * triage pipeline still runs on the remaining data.
  */
-
-const EMAIL_CAP = 12;
-const EVENT_CAP = 8;
-const TASK_CAP = 10;
 
 async function safe<T>(p: Promise<T[]>, label: string): Promise<T[]> {
   try {
@@ -35,9 +36,9 @@ export async function fetchAllContext(
   ]);
 
   return [
-    ...emails.slice(0, EMAIL_CAP),
-    ...events.slice(0, EVENT_CAP),
-    ...tasks.slice(0, TASK_CAP),
+    ...emails.slice(0, GOOGLE_EMAIL_CAP),
+    ...events.slice(0, GOOGLE_EVENT_CAP),
+    ...tasks.slice(0, GOOGLE_TASK_CAP),
   ];
 }
 
