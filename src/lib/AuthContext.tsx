@@ -37,7 +37,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       const provider = new GoogleAuthProvider();
       await signInWithPopup(auth, provider);
     } catch (error: any) {
-      console.error("Firebase Auth Error:", error.message);
+      console.log("Firebase Auth failed (expected without keys), using mock user:", error.message);
       // Fallback for demonstration if no API keys are provided
       if (error.code === 'auth/api-key-not-valid' || error.message.includes('API key')) {
         console.warn("Using mock user for demonstration since valid Firebase keys are missing.");
