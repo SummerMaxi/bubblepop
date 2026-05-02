@@ -47,7 +47,12 @@ export default function BubbleMap() {
       .force('center', d3.forceCenter(width / 2, height / 2).strength(0.05)) // Pull to center
       .force('collision', d3.forceCollide().radius((d: any) => d.radius + 10).iterations(2)) // Don't overlap
       .on('tick', () => {
-        setNodes([...simulation.nodes()]);
+        const nodesArr = simulation.nodes();
+        for (let node of nodesArr) {
+          node.x = Math.max(node.radius + 10, Math.min(width - node.radius - 10, node.x || 0));
+          node.y = Math.max(node.radius + 10, Math.min(height - node.radius - 10, node.y || 0));
+        }
+        setNodes([...nodesArr]);
       });
 
     // Custom force: pull users towards their projects
@@ -90,24 +95,33 @@ export default function BubbleMap() {
         <div
           key={node.id}
           onClick={() => node.type === 'project' && setActiveProject(node)}
-          className={`absolute rounded-full flex items-center justify-center text-center cursor-pointer shadow-xl transition-transform hover:scale-105 border-2 border-white/20 backdrop-blur-md ${node.type === 'project' ? 'z-10' : 'z-20'}`}
+          className={`absolute rounded-full flex flex-col items-center justify-center text-center backdrop-blur-xl transition-all duration-300 border border-white/30 
+            ${node.type === 'project' ? 'cursor-pointer z-10 hover:scale-105 hover:shadow-[0_0_40px_rgba(255,255,255,0.4)]' : 'cursor-default z-20'}
+          `}
           style={{
             width: node.radius * 2,
             height: node.radius * 2,
             left: (node.x || 0) - node.radius,
             top: (node.y || 0) - node.radius,
-            backgroundColor: node.color,
-            boxShadow: `0 0 30px ${node.color}40, inset 0 0 20px rgba(255,255,255,0.2)`
+            background: node.type === 'project' 
+              ? `radial-gradient(circle at 30% 30%, ${node.color}, rgba(0,0,0,0.5))`
+              : `linear-gradient(135deg, ${node.color}cc, rgba(255,255,255,0.1))`,
+            boxShadow: node.type === 'project' 
+              ? `0 10px 40px ${node.color}80, inset 0 2px 20px rgba(255,255,255,0.5)`
+              : `0 4px 15px rgba(0,0,0,0.3), inset 0 2px 10px rgba(255,255,255,0.3)`
           }}
         >
-          <div className="p-4">
-            <p className={`font-bold text-white drop-shadow-md ${node.type === 'project' ? 'text-xl' : 'text-sm'}`}>
+          {node.type === 'project' && (
+            <div className="absolute inset-0 rounded-full border border-white/20 animate-ping opacity-20" style={{ animationDuration: '3s' }}></div>
+          )}
+          <div className="p-4 z-10 flex flex-col items-center justify-center h-full w-full">
+            <p className={`font-bold text-white drop-shadow-lg tracking-wide ${node.type === 'project' ? 'text-2xl leading-tight' : 'text-sm'}`}>
               {node.label}
             </p>
             {node.type === 'project' && (
-              <p className="text-white/80 text-xs mt-1 font-medium bg-black/20 rounded-full px-2 py-1">
-                Click to enter
-              </p>
+              <span className="text-white text-xs mt-2 font-semibold bg-white/20 backdrop-blur-md rounded-full px-3 py-1 uppercase tracking-widest border border-white/20">
+                Open Project
+              </span>
             )}
           </div>
         </div>
