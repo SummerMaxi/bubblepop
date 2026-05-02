@@ -70,7 +70,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!auth) {
-      setLoading(false);
+      // `loading` already initialized to `firebaseConfigured` (false when no auth)
       return;
     }
     const unsub = onAuthStateChanged(auth, (firebaseUser) => {

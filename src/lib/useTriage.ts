@@ -105,7 +105,9 @@ export function useTriage(): TriageState {
   }, [mode, accessToken]);
 
   useEffect(() => {
-    run();
+    // Defer to a microtask so the setLoading(true)/setError(null) at the top
+    // of `run` don't fire synchronously inside this effect body.
+    void Promise.resolve().then(run);
   }, [run]);
 
   return { items, loading, error, refresh: run, source };
