@@ -16,7 +16,8 @@ import type { TriagedItem } from "@/lib/types";
  * Read-only — no tool execution. Non-streaming for simplicity.
  */
 
-const MODEL = "gemini-2.5-flash";
+// Flash-Lite: higher free-tier quota than Flash; chat does fine on it.
+const MODEL = "gemini-2.5-flash-lite";
 
 type ChatRole = "user" | "model";
 

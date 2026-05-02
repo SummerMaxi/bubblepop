@@ -12,7 +12,40 @@ import type { ContextItem, ScoredItem } from "@/lib/types";
  * urgency drive the bubble physics (size + buoyancy) on the client.
  */
 
-const MODEL = "gemini-2.5-flash";
+// Flash-Lite has a much higher free-tier daily quota than Flash (≥1500 RPD vs ~20)
+// — better fit for a hackathon demo that gets clicked through many times.
+const MODEL = "gemini-2.5-flash-lite";
+
+// In-memory response cache. Keyed by the JSON of `items`, 60-second TTL.
+// Per-instance (Cloud Run may scale to multiple instances) — that's fine; the
+// goal is to absorb repeat clicks within a single user's session, not perfect
+// global dedup.
+type CacheEntry = { body: string; expiresAt: number };
+const triageCache = new Map<string, CacheEntry>();
+const CACHE_TTL_MS = 60_000;
+
+function hashKey(items: unknown[]): string {
+  return JSON.stringify(items);
+}
+
+function getCached(key: string): string | null {
+  const hit = triageCache.get(key);
+  if (!hit) return null;
+  if (hit.expiresAt < Date.now()) {
+    triageCache.delete(key);
+    return null;
+  }
+  return hit.body;
+}
+
+function setCached(key: string, body: string) {
+  // Cap cache size to avoid memory bloat (lazy eviction)
+  if (triageCache.size > 50) {
+    const firstKey = triageCache.keys().next().value;
+    if (firstKey) triageCache.delete(firstKey);
+  }
+  triageCache.set(key, { body, expiresAt: Date.now() + CACHE_TTL_MS });
+}
 
 const SYSTEM_INSTRUCTION = `You are an executive assistant for an overwhelmed team lead.
 Your job is to score every item in their inbox / calendar / task list along two dimensions:
@@ -104,6 +137,18 @@ export async function POST(request: Request) {
     );
   }
 
+  // Cache: same items within 60s → return previous response (saves quota).
+  const cacheKey = hashKey(items);
+  const cached = getCached(cacheKey);
+  if (cached) {
+    return new Response(cached, {
+      headers: {
+        "Content-Type": "application/json",
+        "X-Cache": "HIT",
+      },
+    });
+  }
+
   const ai = new GoogleGenAI({ apiKey });
 
   try {
@@ -134,9 +179,26 @@ export async function POST(request: Request) {
       reason: String(s.reason ?? "").slice(0, 240),
     }));
 
-    return Response.json({ scored });
+    const responseBody = JSON.stringify({ scored });
+    setCached(cacheKey, responseBody);
+    return new Response(responseBody, {
+      headers: {
+        "Content-Type": "application/json",
+        "X-Cache": "MISS",
+      },
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "unknown error";
+    // Clean up the quota error so the UI shows something readable.
+    if (msg.includes("RESOURCE_EXHAUSTED") || msg.includes("429")) {
+      return Response.json(
+        {
+          error:
+            "Gemini free-tier quota exhausted for today. Enable billing on the Google Cloud project, or try again after the daily reset.",
+        },
+        { status: 429 },
+      );
+    }
     return Response.json(
       { error: `triage failed: ${msg}` },
       { status: 502 },

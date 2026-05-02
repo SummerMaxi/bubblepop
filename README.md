@@ -121,6 +121,80 @@ Then either click **"Sign in with Google"** for the real flow, or **"Continue wi
 
 ---
 
+## Deploy to Cloud Run (auto-deploy on `git push`)
+
+The repo includes `Dockerfile` + `cloudbuild.yaml` so a Cloud Build trigger watching the `main` branch will build → push to Artifact Registry → deploy to Cloud Run automatically on every push.
+
+### One-time setup
+
+1. **Create the Cloud Build trigger** in Google Cloud Console → Cloud Build → Triggers:
+   - Event: **Push to a branch**
+   - Source: GitHub (App) → `SummerMaxi/bubblepop`
+   - Branch: `^main$`
+   - Configuration: **Autodetected** (it'll pick up `cloudbuild.yaml`)
+   - Service account: a service account with `Cloud Build Service Account`, `Cloud Run Admin`, and `Artifact Registry Writer` roles
+
+2. **Add substitution variables** to the trigger so Firebase auth works in production. The deployment-related ones (`_AR_HOSTNAME`, `_SERVICE_NAME`, etc.) are already in the trigger — these are additional:
+
+   | Variable | Value |
+   |---|---|
+   | `_NEXT_PUBLIC_FIREBASE_API_KEY` | from Firebase Console |
+   | `_NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` | `<project>.firebaseapp.com` |
+   | `_NEXT_PUBLIC_FIREBASE_PROJECT_ID` | `<project>` |
+   | `_NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET` | `<project>.firebasestorage.app` |
+   | `_NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID` | from Firebase Console |
+   | `_NEXT_PUBLIC_FIREBASE_APP_ID` | from Firebase Console |
+   | `_NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID` | from Firebase Console (optional) |
+
+   These are public-safe (they identify the Firebase project, security comes from Firebase rules), so they're fine in build-time substitutions.
+
+3. **Set the Gemini API key** as a runtime env var on the Cloud Run service. Two options:
+
+   **Option A — Plain env var (quickest):**
+   ```bash
+   gcloud run services update bubblepop \
+     --region europe-west1 \
+     --update-env-vars GEMINI_API_KEY=your-key-here
+   ```
+
+   **Option B — Secret Manager (recommended):**
+   ```bash
+   echo -n "your-gemini-key" | gcloud secrets create gemini-api-key --data-file=-
+   gcloud run services update bubblepop \
+     --region europe-west1 \
+     --update-secrets GEMINI_API_KEY=gemini-api-key:latest
+   ```
+
+4. **Add your Cloud Run domain to Firebase authorized domains** so the OAuth popup works:
+   Firebase Console → Authentication → Settings → Authorized domains → add `bubblepop-<hash>-ew.a.run.app`
+
+### What happens on every push
+
+```
+git push origin main
+  ↓
+Cloud Build trigger fires
+  ↓
+docker build (Stage 1: deps → Stage 2: Next.js build → Stage 3: minimal runtime)
+  ↓
+docker push  →  Artifact Registry
+  ↓
+gcloud run deploy bubblepop --image=...  →  Cloud Run
+  ↓
+new revision live, traffic shifted automatically
+```
+
+The Dockerfile uses Next.js's `output: 'standalone'` mode, so the runtime image is ~50 MB — fast cold starts on Cloud Run.
+
+### Manual deploy (no trigger)
+
+```bash
+gcloud builds submit --config=cloudbuild.yaml \
+  --substitutions=_NEXT_PUBLIC_FIREBASE_API_KEY=...,_NEXT_PUBLIC_FIREBASE_PROJECT_ID=...
+```
+
+---
+
 ## Project structure
 
 ```
