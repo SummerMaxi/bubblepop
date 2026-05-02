@@ -1,5 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import type { TriagedItem } from "@/lib/types";
+import { rateLimit, clientKey } from "@/lib/rateLimit";
 
 /**
  * POST /api/chat
@@ -8,12 +9,13 @@ import type { TriagedItem } from "@/lib/types";
  *   messages: { role: "user" | "model"; content: string }[],
  *   context: TriagedItem[]
  * }
- * Returns: { reply: string }
+ * Returns: text/plain stream of Gemini's reply, OR a JSON error.
  *
  * Conversational layer over the triaged context. Gemini is given the
  * current bubble-map items as JSON inside the system instruction so it can
  * reason about them ("what should I do first?", "summarize urgent emails").
- * Read-only — no tool execution. Non-streaming for simplicity.
+ * Read-only — no tool execution. Streams chunks as plain text so the UI can
+ * render token-by-token.
  */
 
 // Flash-Lite: higher free-tier quota than Flash; chat does fine on it.
@@ -91,6 +93,23 @@ export async function POST(request: Request) {
     );
   }
 
+  // Chat is more expensive than triage (multi-turn, no cache), so the limit
+  // is tighter: 15 requests per 60s per client.
+  const { allowed, retryAfter } = rateLimit({
+    key: clientKey(request),
+    limit: 15,
+    windowMs: 60_000,
+  });
+  if (!allowed) {
+    return Response.json(
+      { error: "Rate limit exceeded — too many chat requests. Try again shortly." },
+      {
+        status: 429,
+        headers: { "Retry-After": String(retryAfter ?? 60) },
+      },
+    );
+  }
+
   let body: { messages?: unknown; context?: unknown };
   try {
     body = await request.json();
@@ -129,27 +148,60 @@ export async function POST(request: Request) {
     parts: [{ text: m.content }],
   }));
 
+  // Open the streaming request before constructing the Response. Errors here
+  // (validation, quota, transport) are pre-stream — we can still return JSON.
+  let iterator: AsyncGenerator<{ text?: string }>;
   try {
-    const response = await ai.models.generateContent({
+    iterator = (await ai.models.generateContentStream({
       model: MODEL,
       contents,
       config: {
         systemInstruction: buildSystemInstruction(context),
         temperature: 0.6,
       },
-    });
-
-    const reply = response.text;
-    if (!reply) {
-      return Response.json(
-        { error: "empty response from model" },
-        { status: 502 },
-      );
-    }
-
-    return Response.json({ reply });
+    })) as AsyncGenerator<{ text?: string }>;
   } catch (err) {
     const msg = err instanceof Error ? err.message : "unknown error";
+    if (msg.includes("RESOURCE_EXHAUSTED") || msg.includes("429")) {
+      return Response.json(
+        {
+          error:
+            "Gemini free-tier quota exhausted for today. Enable billing on the Google Cloud project, or try again after the daily reset.",
+        },
+        { status: 429 },
+      );
+    }
     return Response.json({ error: `chat failed: ${msg}` }, { status: 502 });
   }
+
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { value, done } = await iterator.next();
+        if (done) {
+          controller.close();
+          return;
+        }
+        const text = value?.text;
+        if (text) {
+          controller.enqueue(encoder.encode(text));
+        }
+      } catch {
+        // Mid-stream error: close gracefully — we've already committed to a 200.
+        controller.close();
+      }
+    },
+    cancel() {
+      // If the client aborts, attempt to release the iterator.
+      void iterator.return?.(undefined);
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-store",
+    },
+  });
 }

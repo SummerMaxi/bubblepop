@@ -1,5 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import type { ContextItem, ScoredItem } from "@/lib/types";
+import { rateLimit, clientKey } from "@/lib/rateLimit";
 
 /**
  * POST /api/triage
@@ -147,6 +148,24 @@ export async function POST(request: Request) {
         "X-Cache": "HIT",
       },
     });
+  }
+
+  // Rate limit AFTER the cache check: cache hits are free (no upstream cost),
+  // so they shouldn't count against a user's quota. We only throttle requests
+  // that would actually hit Gemini.
+  const { allowed, retryAfter } = rateLimit({
+    key: clientKey(request),
+    limit: 30, // 30 requests per minute per client
+    windowMs: 60_000,
+  });
+  if (!allowed) {
+    return Response.json(
+      { error: "Rate limit exceeded — too many requests. Try again shortly." },
+      {
+        status: 429,
+        headers: { "Retry-After": String(retryAfter ?? 60) },
+      },
+    );
   }
 
   const ai = new GoogleGenAI({ apiKey });

@@ -34,30 +34,87 @@ const QUICK_PROMPTS = [
   "Anyone blocked on me?",
 ] as const;
 
+const FOCUSABLE_SELECTOR =
+  'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+
 export function ChatPanel({ open, onClose, items }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  // Whether we're awaiting the FIRST chunk of the in-flight reply.
+  // Drives the typing indicator; flips false as soon as text starts streaming.
+  const [awaitingFirstChunk, setAwaitingFirstChunk] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  // Element that had focus before the panel opened — we restore to it on close.
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
 
-  // Focus the input when the panel opens.
+  // Focus the input when the panel opens; restore previous focus on close.
   useEffect(() => {
     if (open) {
+      previouslyFocusedRef.current =
+        (document.activeElement as HTMLElement | null) ?? null;
       // small delay so the slide-in animation can start first
       const t = setTimeout(() => inputRef.current?.focus(), 150);
       return () => clearTimeout(t);
     }
+    // open === false: restore focus to the opener (if it's still in the DOM).
+    const prev = previouslyFocusedRef.current;
+    if (prev && document.contains(prev)) {
+      prev.focus();
+    }
+    previouslyFocusedRef.current = null;
   }, [open]);
 
-  // Auto-scroll to bottom whenever messages or loading change.
+  // Esc-to-close + Tab focus trap while open.
+  useEffect(() => {
+    if (!open) return;
+    function onKeyDown(e: globalThis.KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const root = panelRef.current;
+      if (!root) return;
+      const focusables = Array.from(
+        root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
+      ).filter(
+        (el) => !el.hasAttribute("disabled") && el.tabIndex !== -1,
+      );
+      if (focusables.length === 0) {
+        e.preventDefault();
+        return;
+      }
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      if (e.shiftKey) {
+        if (active === first || !root.contains(active)) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else {
+        if (active === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [open, onClose]);
+
+  // Auto-scroll to bottom whenever messages or loading state change.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [messages, loading]);
+  }, [messages, loading, awaitingFirstChunk]);
 
   const send = useCallback(
     async (text: string) => {
@@ -72,6 +129,7 @@ export function ChatPanel({ open, onClose, items }: Props) {
       setMessages(next);
       setInput("");
       setLoading(true);
+      setAwaitingFirstChunk(true);
 
       try {
         const res = await fetch("/api/chat", {
@@ -86,23 +144,84 @@ export function ChatPanel({ open, onClose, items }: Props) {
           };
           setError(data.error ?? `Request failed (${res.status})`);
           setLoading(false);
+          setAwaitingFirstChunk(false);
           return;
         }
 
-        const data = (await res.json()) as { reply?: string };
-        if (!data.reply) {
+        if (!res.body) {
           setError("Empty response from model");
           setLoading(false);
+          setAwaitingFirstChunk(false);
           return;
         }
-        setMessages((prev) => [
-          ...prev,
-          { role: "model", content: data.reply as string },
-        ]);
-        setLoading(false);
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let assistantStarted = false;
+        let totalText = "";
+
+        // Stream loop: append chunks to the in-flight assistant message.
+        // The first chunk creates the assistant bubble and hides the typing
+        // indicator; subsequent chunks update the last message in place.
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          const chunk = decoder.decode(value, { stream: true });
+          if (!chunk) continue;
+          totalText += chunk;
+          if (!assistantStarted) {
+            assistantStarted = true;
+            setAwaitingFirstChunk(false);
+            setMessages((prev) => [
+              ...prev,
+              { role: "model", content: totalText },
+            ]);
+          } else {
+            setMessages((prev) => {
+              if (prev.length === 0) return prev;
+              const last = prev[prev.length - 1];
+              if (last.role !== "model") return prev;
+              const updated = [...prev];
+              updated[updated.length - 1] = {
+                ...last,
+                content: totalText,
+              };
+              return updated;
+            });
+          }
+        }
+        // Flush any trailing bytes from the decoder.
+        const tail = decoder.decode();
+        if (tail) {
+          totalText += tail;
+          if (!assistantStarted) {
+            setMessages((prev) => [
+              ...prev,
+              { role: "model", content: totalText },
+            ]);
+          } else {
+            setMessages((prev) => {
+              if (prev.length === 0) return prev;
+              const last = prev[prev.length - 1];
+              if (last.role !== "model") return prev;
+              const updated = [...prev];
+              updated[updated.length - 1] = {
+                ...last,
+                content: totalText,
+              };
+              return updated;
+            });
+          }
+        }
+
+        if (!assistantStarted) {
+          setError("Empty response from model");
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Network error");
+      } finally {
         setLoading(false);
+        setAwaitingFirstChunk(false);
       }
     },
     [items, loading, messages],
@@ -131,9 +250,13 @@ export function ChatPanel({ open, onClose, items }: Props) {
       )}
       aria-hidden={!open}
       role="dialog"
+      aria-modal="true"
       aria-label="Gemini chat"
     >
-      <div className="m-4 flex h-[calc(100%-2rem)] flex-col rounded-2xl border border-border bg-card shadow-[0_20px_60px_rgba(0,0,0,0.25)]">
+      <div
+        ref={panelRef}
+        className="m-4 flex h-[calc(100%-2rem)] flex-col rounded-2xl border border-border bg-card shadow-[0_20px_60px_rgba(0,0,0,0.25)]"
+      >
         {/* Header */}
         <header className="flex items-center justify-between border-b border-border px-6 py-4">
           <SectionLabel tone="accent" pulsing>
@@ -190,7 +313,7 @@ export function ChatPanel({ open, onClose, items }: Props) {
               {messages.map((m, i) => (
                 <MessageBubble key={i} role={m.role} content={m.content} />
               ))}
-              {loading && <TypingIndicator />}
+              {awaitingFirstChunk && <TypingIndicator />}
               {error && (
                 <div
                   role="alert"

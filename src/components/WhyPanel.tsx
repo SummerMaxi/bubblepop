@@ -1,8 +1,12 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import { Mail, Calendar, CheckSquare, X, Clock, User } from "lucide-react";
 import type { TriagedItem } from "@/lib/types";
 import { cn } from "@/lib/cn";
+
+const FOCUSABLE_SELECTOR =
+  'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
 interface Props {
   item: TriagedItem | null;
@@ -78,14 +82,87 @@ export function WhyPanel({ item, onClose }: Props) {
   const Icon = item ? SOURCE_ICON[item.source] : Mail;
   const when = item ? relativeTime(item.timestamp) : null;
 
+  const panelRef = useRef<HTMLElement | null>(null);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
+
+  // Esc-to-close, focus trap (Tab/Shift+Tab), auto-focus close button on open,
+  // and restore focus to the previously active element on close.
+  useEffect(() => {
+    if (!open) return;
+
+    // Capture the element that had focus before the panel opened so we can
+    // return focus to it when the panel closes.
+    previouslyFocusedRef.current =
+      typeof document !== "undefined"
+        ? (document.activeElement as HTMLElement | null)
+        : null;
+
+    // Auto-focus the close button so keyboard users can immediately Esc/Tab.
+    closeButtonRef.current?.focus();
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+
+      if (event.key !== "Tab") return;
+
+      const panel = panelRef.current;
+      if (!panel) return;
+
+      const focusables = Array.from(
+        panel.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR),
+      ).filter(
+        (el) => !el.hasAttribute("disabled") && el.getAttribute("aria-hidden") !== "true",
+      );
+
+      if (focusables.length === 0) {
+        event.preventDefault();
+        return;
+      }
+
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+
+      if (event.shiftKey) {
+        if (active === first || !panel.contains(active)) {
+          event.preventDefault();
+          last.focus();
+        }
+      } else {
+        if (active === last || !panel.contains(active)) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+
+    const previouslyFocused = previouslyFocusedRef.current;
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      // Restore focus to the element that had it before the panel opened.
+      if (previouslyFocused && typeof previouslyFocused.focus === "function") {
+        previouslyFocused.focus();
+      }
+    };
+  }, [open, onClose]);
+
   return (
     <aside
+      ref={panelRef}
       className={cn(
         "pointer-events-none fixed right-0 top-0 z-40 flex h-full w-full max-w-md flex-col",
         "transform transition-transform duration-300 ease-out",
         open ? "translate-x-0 pointer-events-auto" : "translate-x-full",
       )}
       aria-hidden={!open}
+      aria-modal="true"
       role="dialog"
       aria-label="Triage explanation"
     >
@@ -99,6 +176,7 @@ export function WhyPanel({ item, onClose }: Props) {
             </span>
           </div>
           <button
+            ref={closeButtonRef}
             type="button"
             onClick={onClose}
             className="rounded-full p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
